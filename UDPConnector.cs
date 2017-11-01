@@ -3,12 +3,12 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using System.IO;
-using System.Threading.Tasks;
 using System.Threading;
 using System.Text;
 using System.Linq;
 
 #if !UNITY_EDITOR && UNITY_METRO
+using System.Threading.Tasks;
 using Windows.Networking.Connectivity;
 using Windows.Networking.Sockets;
 using Windows.Storage.Streams;
@@ -56,10 +56,8 @@ namespace oi.core.network {
         private string UID;
         private string localIP = "";
 
-        private Task _sendTask;
         private bool _sendRunning = false;
         ManualResetEvent send_MRSTE = new ManualResetEvent(false);
-        private Task _listenTask;
         private bool _listenRunning = false;
         private Queue<byte[]> _sendQueue = new Queue<byte[]>();
         private Queue<byte[]> _receiveQueue = new Queue<byte[]>();
@@ -80,25 +78,41 @@ namespace oi.core.network {
         private float currentTime = 0;
 
         // Remote Client
-        public bool connected { get; private set; } = false;
+        public bool connected { get; private set; }
 
 
 #if !UNITY_EDITOR && UNITY_METRO
-    private DatagramSocket udpClient;
+        private DatagramSocket udpClient;
+        private Task _sendTask;
+        private Task _listenTask;
 #else
         private UdpClient udpClient;
+	    private Thread _sendThread;
+	    private Thread _listenThread;
 #endif
 
         // Use this for initialization
+#if !UNITY_EDITOR && UNITY_METRO
         async void Start() {
+#else
+        void Start() {
+            connected = false;
+#endif
             cutoffLength = 60000 - headerLen;
 
             localIP = GetLocalIPAddress();
             UID = SystemInfo.deviceUniqueIdentifier;
 
+#if !UNITY_EDITOR && UNITY_METRO
             _listenTask = Task.Run(() => DataListener());
             await Task.Delay(1000);
             _sendTask = Task.Run(() => DataSender());
+#else
+		_sendThread = new Thread(DataSender);
+		_sendThread.Start();
+        _listenThread = new Thread(DataListener);
+		_listenThread.Start();
+#endif
         }
 
         // Update is called once per frame
@@ -129,8 +143,8 @@ namespace oi.core.network {
 
         UInt32 packageSequenceID = 0;
         public void SendData(byte[] nextPacket) {
-            if (nextPacket.Length != 0)
-                OnDataOut?.Invoke(nextPacket);
+            if (nextPacket.Length != 0 && OnDataOut != null)
+                OnDataOut.Invoke(nextPacket);
 
             if (connected) {
                 if (nextPacket.Length != 0) {
@@ -214,21 +228,22 @@ namespace oi.core.network {
 
         //------------- LISTEN STUFF -----------------
 
-        private async Task DataListener() {
 
 #if !UNITY_EDITOR && UNITY_METRO
-        udpClient = new DatagramSocket();
-        udpClient.MessageReceived += Listener_MessageReceived;
-        try {
-            await udpClient.BindEndpointAsync(null, "0");
-            if(debug) Debug.Log("Listening on port: " + udpClient.Information.LocalPort);
-        } catch (Exception e) {
-            if(debug) Debug.Log("DATA LISTENER START EXCEPTION: " + e.ToString());
-            if(debug) Debug.Log(SocketError.GetStatus(e.HResult).ToString());
-            return;
-        }
+        private async Task DataListener() {
+            udpClient = new DatagramSocket();
+            udpClient.MessageReceived += Listener_MessageReceived;
+            try {
+                await udpClient.BindEndpointAsync(null, "0");
+                if(debug) Debug.Log("Listening on port: " + udpClient.Information.LocalPort);
+            } catch (Exception e) {
+                if(debug) Debug.Log("DATA LISTENER START EXCEPTION: " + e.ToString());
+                if(debug) Debug.Log(SocketError.GetStatus(e.HResult).ToString());
+                return;
+            }
 
 #else
+        private void DataListener() {
             IPEndPoint anyIP = new IPEndPoint(IPAddress.Any, 0);
             udpClient = new UdpClient(anyIP);
             int listenPort = ((IPEndPoint)udpClient.Client.LocalEndPoint).Port;
@@ -242,7 +257,7 @@ namespace oi.core.network {
                     byte[] receivedPackage = udpClient.Receive(ref anyIP);
                     HandleReceivedData(receivedPackage);
                 } catch (Exception e) {
-                    //Debug.Log(e);
+                    Debug.LogWarning("Exception in UDPConnector.DataListener: "+e);
                 }
             }
             udpClient.Close();
@@ -323,7 +338,7 @@ namespace oi.core.network {
                 if (partsAm == 1) {
                     lock (_receiveQueue)
                         _receiveQueue.Enqueue(data);
-                    OnDataIn?.Invoke(data);
+                    if (OnDataIn != null) OnDataIn.Invoke(data);
                 } else if (partsAm > 1) {
                     if (!_dataParts.ContainsKey(packageSequenceID)) {
                         byte[][] parts = new byte[partsAm][];
@@ -353,13 +368,13 @@ namespace oi.core.network {
 
                             lock (_receiveQueue)
                                 _receiveQueue.Enqueue(concatData);
-                            OnDataIn?.Invoke(concatData);
+                            if (OnDataIn != null) OnDataIn.Invoke(concatData);
                         }
                     }
                 }
             } else {
                 lastReceivedHB = currentTime;
-                OnDataIn?.Invoke(inData);
+                if (OnDataIn != null) OnDataIn.Invoke(inData);
                 lock (_receiveQueue)
                     _receiveQueue.Enqueue(inData);
             }
@@ -378,16 +393,19 @@ namespace oi.core.network {
             }
         }
 
-        private async void _sendData(byte[] data, string hostName, int port) {
 #if !UNITY_EDITOR && UNITY_METRO
-        using (var stream = await udpClient.GetOutputStreamAsync(new HostName(hostName), port.ToString())) {
-            using (var writer = new DataWriter(stream)) {
-                writer.WriteBytes(data);
-                await writer.StoreAsync();
-            }
-        }
-#else
+        private async void _sendData(byte[] data, string hostName, int port) {
             await udpClient.SendAsync(data, data.Length, hostName, port);
+
+            using (var stream = await udpClient.GetOutputStreamAsync(new HostName(hostName), port.ToString())) {
+                using (var writer = new DataWriter(stream)) {
+                    writer.WriteBytes(data);
+                    await writer.StoreAsync();
+                }
+            }
+#else
+        private void _sendData(byte[] data, string hostName, int port) {
+            udpClient.Send(data, data.Length, hostName, port); 
 #endif
         }
 
@@ -407,7 +425,11 @@ namespace oi.core.network {
             _sendData(sendBytes, remoteAddress, remotePort);
         }
 
+#if !UNITY_EDITOR && UNITY_METRO
         private async void DataSender() {
+#else
+        private void DataSender() {
+#endif
             _sendRunning = true;
 
             while (_sendRunning) {
@@ -423,7 +445,12 @@ namespace oi.core.network {
                         }
                     }
                     if (nextPacket.Length != 0) {
+
+#if !UNITY_EDITOR && UNITY_METRO
+                        await _sendData(nextPacket, remoteAddress, remotePort);
+#else
                         _sendData(nextPacket, remoteAddress, remotePort);
+#endif
                         if (debug) Debug.Log("DataSender Sent Data");
                     }
                 }

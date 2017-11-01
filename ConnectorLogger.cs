@@ -2,8 +2,12 @@
 using System.Collections.Generic;
 using UnityEngine;
 using System.IO;
-using System.Threading.Tasks;
 using System.Threading;
+
+#if !UNITY_EDITOR && UNITY_METRO
+using System.Threading.Tasks;
+#else
+#endif
 
 
 namespace oi.core.network {
@@ -16,7 +20,11 @@ namespace oi.core.network {
 
     public class ConnectorLogger : MonoBehaviour {
 
+#if !UNITY_EDITOR && UNITY_METRO
         private Task _writeTask;
+#else
+        private Thread _writeThread;
+#endif
         private bool _writeRunning = false;
         private ManualResetEvent write_MRSTE = new ManualResetEvent(false);
         private Queue<Message> _writeQueue = new Queue<Message>();
@@ -38,7 +46,12 @@ namespace oi.core.network {
                 type = "OUT";
             }
 
+#if !UNITY_EDITOR && UNITY_METRO
             _writeTask = Task.Run(() => DataWriter());
+#else
+            _writeThread = new Thread(DataWriter);
+		    _writeThread.Start();
+#endif
         }
 
         private void NewData(byte[] data) {
@@ -52,7 +65,11 @@ namespace oi.core.network {
             }
         }
 
+#if !UNITY_EDITOR && UNITY_METRO
         private async void DataWriter() {
+#else
+        private void DataWriter() {
+#endif
             _writeRunning = true;
 
             string path = folderPath + "/" + socketID + "_" + type + ".rec";
