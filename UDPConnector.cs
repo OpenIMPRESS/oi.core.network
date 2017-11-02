@@ -43,15 +43,27 @@ namespace oi.core.network {
         public delegate void _DataOut(byte[] data);
         public event _DataOut OnDataOut;
 
-        public bool debug = false;
-        public string socketID;
-        public string remoteAddress = "";
-        public int remotePort;
+        // Public settings, applied in Start()
+        public int debugLevel;
+        public string SocketID;
+        public bool UseMatchmakingServer = true;
+        public string ManualHostName = "";
+        public int ManualPort;
+        public bool IsSender;
+        // =======================================
 
-        public bool useMatchmakingServer = true;
-        public bool isSender;
-        public string _serverHostname = "mm.openimpress.org";
-        public int _serverPort = 6312;
+        // Socket Description
+        private string _socketID;
+        private bool _isSender;
+
+        // Socket Connection (From MM or manually set)
+        public string _remoteAddress { get; private set; }
+        public int _remotePort { get; private set; }
+        private bool _useMatchmakingServer;
+
+        // MM Server
+        private string _serverHostname;
+        private int _serverPort;
 
         private string UID;
         private string localIP = "";
@@ -78,8 +90,31 @@ namespace oi.core.network {
         private float currentTime = 0;
 
         // Remote Client
-        public bool connected { get; private set; }
+        public bool connected;
 
+
+        // TODO: THIS IS FOR DEBUGGING ONLY
+        public string guidSuffix = "";
+
+        // TODO: store and calculate outgoing data
+        public float GetTrafficBytesOut() {
+            return 1.0f; // return in Bytes/second
+        }
+
+        // TODO: store and calculate incomming data
+        public float GetTrafficBytesIn() {
+            return 1.0f; // return in Bytes/second
+        }
+
+        // TODO: store and calculate outgoing messages
+        public float GetTrafficMessagesOut() {
+            return 1.0f; // return in Messages/second
+        }
+
+        // TODO: store and calculate incomming messages
+        public float GetTrafficMessagesIn() {
+            return 1.0f; // return in Messages/second
+        }
 
 #if !UNITY_EDITOR && UNITY_METRO
         private DatagramSocket udpClient;
@@ -91,17 +126,38 @@ namespace oi.core.network {
 	    private Thread _listenThread;
 #endif
 
+        private SessionManager sm;
         // Use this for initialization
 #if !UNITY_EDITOR && UNITY_METRO
         async void Start() {
 #else
+        
         void Start() {
-            connected = false;
 #endif
-            cutoffLength = 60000 - headerLen;
+            sm = FindObjectOfType<SessionManager>();
+            if (sm == null) {
+                Debug.LogError("Please add and configure a SessionManager component to the scene.");
+                return;
+            }
 
+            _serverHostname = sm.GetMMHostName();
+            _serverPort = sm.GetMMPort();
+            connected = false;
+
+            _useMatchmakingServer = UseMatchmakingServer;
+            if (!_useMatchmakingServer) {
+                _remoteAddress = ManualHostName;
+                _remotePort = ManualPort;
+            }
+            _isSender = IsSender;
+            _socketID = SocketID;
+
+            cutoffLength = 60000 - headerLen;
             localIP = GetLocalIPAddress();
-            UID = SystemInfo.deviceUniqueIdentifier;
+            UID = sm.GetGUID();
+            if (debugLevel > 0) {
+                UID = UID+guidSuffix;
+            }
 
 #if !UNITY_EDITOR && UNITY_METRO
             _listenTask = Task.Run(() => DataListener());
@@ -118,7 +174,7 @@ namespace oi.core.network {
         // Update is called once per frame
         void Update() {
             currentTime = Time.time;
-            if (useMatchmakingServer) {
+            if (_useMatchmakingServer) {
                 if (connected && Time.time > lastReceivedHB + connectionTimeout) {
                     connected = false;
                 }
@@ -235,10 +291,10 @@ namespace oi.core.network {
             udpClient.MessageReceived += Listener_MessageReceived;
             try {
                 await udpClient.BindEndpointAsync(null, "0");
-                if(debug) Debug.Log("Listening on port: " + udpClient.Information.LocalPort);
+                if(debugLevel > 0) Debug.Log("Listening on port: " + udpClient.Information.LocalPort);
             } catch (Exception e) {
-                if(debug) Debug.Log("DATA LISTENER START EXCEPTION: " + e.ToString());
-                if(debug) Debug.Log(SocketError.GetStatus(e.HResult).ToString());
+                if(debugLevel > 0) Debug.Log("DATA LISTENER START EXCEPTION: " + e.ToString());
+                if(debugLevel > 0) Debug.Log(SocketError.GetStatus(e.HResult).ToString());
                 return;
             }
 
@@ -247,7 +303,7 @@ namespace oi.core.network {
             IPEndPoint anyIP = new IPEndPoint(IPAddress.Any, 0);
             udpClient = new UdpClient(anyIP);
             int listenPort = ((IPEndPoint)udpClient.Client.LocalEndPoint).Port;
-            if (debug) Debug.Log("Client listening on " + listenPort);
+            if (debugLevel > 0) Debug.Log("Client listening on " + listenPort);
 
             _listenRunning = true;
             while (_listenRunning) {
@@ -257,11 +313,11 @@ namespace oi.core.network {
                     byte[] receivedPackage = udpClient.Receive(ref anyIP);
                     HandleReceivedData(receivedPackage);
                 } catch (Exception e) {
-                    Debug.LogWarning("Exception in UDPConnector.DataListener: "+e);
+                    if (_listenRunning) Debug.LogWarning("Exception in UDPConnector.DataListener: "+e);
                 }
             }
             udpClient.Close();
-            if (debug) Debug.Log("DataListener Stopped");
+            if (debugLevel > 0) Debug.Log("DataListener Stopped");
 #endif
         }
 
@@ -273,8 +329,8 @@ namespace oi.core.network {
             byte[] receivedPackage = ms.ToArray();
             HandleReceivedData(receivedPackage);
         } catch (Exception e) {
-            if(debug) Debug.Log("DATA LISTENER EXCEPTION: " + e.ToString());
-            if(debug) Debug.Log(SocketError.GetStatus(e.HResult).ToString());
+            if(debugLevel > 0) Debug.Log("DATA LISTENER EXCEPTION: " + e.ToString());
+            if(debugLevel > 0) Debug.Log(SocketError.GetStatus(e.HResult).ToString());
             return;
         }
     }
@@ -294,7 +350,7 @@ namespace oi.core.network {
 
 
         private void HandleReceivedData(byte[] inData) {
-            if (debug) {
+            if (debugLevel > 1) {
                 string dString = Encoding.ASCII.GetString(inData);
                 Debug.Log(dString.Length + "  " + (byte)inData[0] + "  " + dString);
             }
@@ -305,8 +361,8 @@ namespace oi.core.network {
                 try {
                     AnswerObject obj = JsonUtility.FromJson<AnswerObject>(json);
                     if (obj.type == "answer") {
-                        remoteAddress = obj.address;
-                        remotePort = obj.port;
+                        _remoteAddress = obj.address;
+                        _remotePort = obj.port;
                         Punch();
                         Punch();
                     }
@@ -334,7 +390,7 @@ namespace oi.core.network {
                 byte[] data = new byte[inData.Length - headerLen];
                 Array.Copy(inData, headerLen, data, 0, inData.Length - headerLen);
 
-                if (debug) Debug.Log("packageSequenceID:  " + packageSequenceID + ", partsAm: " + partsAm + ", currentPart: " + currentPart + ", size: " + inData.Length);
+                if (debugLevel > 1) Debug.Log("packageSequenceID:  " + packageSequenceID + ", partsAm: " + partsAm + ", currentPart: " + currentPart + ", size: " + inData.Length);
                 if (partsAm == 1) {
                     lock (_receiveQueue)
                         _receiveQueue.Enqueue(data);
@@ -411,8 +467,8 @@ namespace oi.core.network {
 
         private void Register() {
             RegisterObject regObj = new RegisterObject();
-            regObj.socketID = socketID;
-            regObj.isSender = isSender;
+            regObj.socketID = _socketID;
+            regObj.isSender = _isSender;
             regObj.localIP = localIP;
             regObj.UID = UID;
             string json = JsonUtility.ToJson(regObj);
@@ -422,7 +478,7 @@ namespace oi.core.network {
 
         private void Punch() {
             byte[] sendBytes = Encoding.ASCII.GetBytes((char)100 + "{\"type\":\"punch\"}");
-            _sendData(sendBytes, remoteAddress, remotePort);
+            _sendData(sendBytes, _remoteAddress, _remotePort);
         }
 
 #if !UNITY_EDITOR && UNITY_METRO
@@ -434,7 +490,6 @@ namespace oi.core.network {
 
             while (_sendRunning) {
                 send_MRSTE.WaitOne();
-                if (debug) Debug.Log("DataSender Unlocked");
                 int queueCount = 1;
                 while (queueCount > 0) {
                     byte[] nextPacket = new byte[0];
@@ -447,16 +502,15 @@ namespace oi.core.network {
                     if (nextPacket.Length != 0) {
 
 #if !UNITY_EDITOR && UNITY_METRO
-                        await _sendData(nextPacket, remoteAddress, remotePort);
+                        await _sendData(nextPacket, _remoteAddress, _remotePort);
 #else
-                        _sendData(nextPacket, remoteAddress, remotePort);
+                        _sendData(nextPacket, _remoteAddress, _remotePort);
 #endif
-                        if (debug) Debug.Log("DataSender Sent Data");
                     }
                 }
 
             }
-            if (debug) Debug.Log("DataSender Stopped");
+            if (debugLevel > 0) Debug.Log("DataSender Stopped");
         }
     }
 }

@@ -36,7 +36,7 @@ namespace oi.core.network {
 
         public void Init(string path, UDPConnector client, bool dataIn) {
             folderPath = path;
-            socketID = client.socketID;
+            socketID = client.SocketID;
 
             if (dataIn) {
                 client.OnDataIn += NewData;
