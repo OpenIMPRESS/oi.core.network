@@ -71,11 +71,13 @@ namespace oi.core.network {
 
 
         private bool _sendRunning = false;
-        ManualResetEvent send_MRSTE = new ManualResetEvent(false);
+        AutoResetEvent send_ResetEvent = new AutoResetEvent(false);
 
         private bool _listenRunning = false;
         private Queue<byte[]> _sendQueue = new Queue<byte[]>();
+        private System.Object _sendQueueLock = new System.Object();  
         private Queue<byte[]> _receiveQueue = new Queue<byte[]>();
+        private System.Object _receiveQueueLock = new System.Object();  
         Dictionary<UInt32, byte[][]> _dataParts = new Dictionary<UInt32, byte[][]>();
 
         private int headerLen = 13;
@@ -245,7 +247,7 @@ namespace oi.core.network {
 
         public byte[] GetNewData() {
             byte[] returnBytes = null;
-            lock (_receiveQueue) {
+            lock (_receiveQueueLock) {
                 if (_receiveQueue.Count > 0) {
                     returnBytes = _receiveQueue.Dequeue();
                 }
@@ -397,7 +399,7 @@ namespace oi.core.network {
 
                 if (debugLevel > 1) Debug.Log("packageSequenceID:  " + packageSequenceID + ", partsAm: " + partsAm + ", currentPart: " + currentPart + ", size: " + inData.Length);
                 if (partsAm == 1) {
-                    lock (_receiveQueue)
+                    lock (_receiveQueueLock)
                         _receiveQueue.Enqueue(data);
                     if (OnDataIn != null) OnDataIn.Invoke(data);
                 } else if (partsAm > 1) {
@@ -427,7 +429,7 @@ namespace oi.core.network {
                                 idx += parts[i].Length;
                             }
 
-                            lock (_receiveQueue)
+                            lock (_receiveQueueLock)
                                 _receiveQueue.Enqueue(concatData);
                             if (OnDataIn != null) OnDataIn.Invoke(concatData);
                         }
@@ -436,7 +438,7 @@ namespace oi.core.network {
             } else {
                 lastReceivedHB = currentTime;
                 if (OnDataIn != null) OnDataIn.Invoke(inData);
-                lock (_receiveQueue)
+                lock (_receiveQueueLock)
                     _receiveQueue.Enqueue(inData);
             }
         }
@@ -445,12 +447,9 @@ namespace oi.core.network {
         //------------- SEND STUFF -----------------
 
         private void _BufferSendData(byte[] dataBufferToSend) {
-            if (connected) {
-                lock (_sendQueue) {
-                    _sendQueue.Enqueue(dataBufferToSend);
-                    send_MRSTE.Set();
-                    send_MRSTE.Reset();
-                }
+            lock (_sendQueueLock) {
+                _sendQueue.Enqueue(dataBufferToSend);
+                send_ResetEvent.Set();
             }
         }
 
@@ -493,23 +492,18 @@ namespace oi.core.network {
             _sendRunning = true;
 
             while (_sendRunning) {
-                send_MRSTE.WaitOne();
+                send_ResetEvent.WaitOne();
                 int queueCount = 1;
                 while (queueCount > 0) {
                     byte[] nextPacket = new byte[0];
-                    lock (_sendQueue) {
+                    lock (_sendQueueLock) {
                         queueCount = _sendQueue.Count;
                         if (queueCount > 0) {
                             nextPacket = _sendQueue.Dequeue();
                         }
                     }
                     if (nextPacket.Length != 0) {
-#if !UNITY_EDITOR && UNITY_METRO
-                        await _sendData(nextPacket, _remoteAddress, _remotePort);
-#else
                         _sendData(nextPacket, _remoteAddress, _remotePort);
-                        //Thread.Sleep(50);
-#endif
                     }
                 }
 
