@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using System.IO;
+
 using System.Threading;
 using System.Text;
 using System.Linq;
@@ -68,8 +69,10 @@ namespace oi.core.network {
         private string UID;
         private string localIP = "";
 
+
         private bool _sendRunning = false;
         ManualResetEvent send_MRSTE = new ManualResetEvent(false);
+
         private bool _listenRunning = false;
         private Queue<byte[]> _sendQueue = new Queue<byte[]>();
         private Queue<byte[]> _receiveQueue = new Queue<byte[]>();
@@ -122,12 +125,12 @@ namespace oi.core.network {
         private Task _listenTask;
 #else
         private UdpClient udpClient;
-	    private Thread _sendThread;
-	    private Thread _listenThread;
+        private Thread _sendThread;
+        private Thread _listenThread;
 #endif
-
         private SessionManager sm;
         // Use this for initialization
+
 #if !UNITY_EDITOR && UNITY_METRO
         async void Start() {
 #else
@@ -159,15 +162,16 @@ namespace oi.core.network {
                 UID = UID+guidSuffix;
             }
 
+
 #if !UNITY_EDITOR && UNITY_METRO
             _listenTask = Task.Run(() => DataListener());
             await Task.Delay(1000);
             _sendTask = Task.Run(() => DataSender());
 #else
-		_sendThread = new Thread(DataSender);
-		_sendThread.Start();
-        _listenThread = new Thread(DataListener);
-		_listenThread.Start();
+            _sendThread = new Thread(DataSender);
+            _sendThread.Start();
+            _listenThread = new Thread(DataListener);
+            _listenThread.Start();
 #endif
         }
 
@@ -199,8 +203,8 @@ namespace oi.core.network {
 
         UInt32 packageSequenceID = 0;
         public void SendData(byte[] nextPacket) {
-            if (nextPacket.Length != 0 && OnDataOut != null)
-                OnDataOut.Invoke(nextPacket);
+            if (nextPacket.Length != 0)
+                if (OnDataOut != null) OnDataOut.Invoke(nextPacket);
 
             if (connected) {
                 if (nextPacket.Length != 0) {
@@ -283,8 +287,6 @@ namespace oi.core.network {
         }
 
         //------------- LISTEN STUFF -----------------
-
-
 #if !UNITY_EDITOR && UNITY_METRO
         private async Task DataListener() {
             udpClient = new DatagramSocket();
@@ -297,7 +299,7 @@ namespace oi.core.network {
                 if(debugLevel > 0) Debug.Log(SocketError.GetStatus(e.HResult).ToString());
                 return;
             }
-
+        }
 #else
         private void DataListener() {
             IPEndPoint anyIP = new IPEndPoint(IPAddress.Any, 0);
@@ -318,8 +320,9 @@ namespace oi.core.network {
             }
             udpClient.Close();
             if (debugLevel > 0) Debug.Log("DataListener Stopped");
-#endif
         }
+#endif
+
 
 #if !UNITY_EDITOR && UNITY_METRO
     private async void Listener_MessageReceived(DatagramSocket sender, DatagramSocketMessageReceivedEventArgs args) {
@@ -451,19 +454,18 @@ namespace oi.core.network {
 
 #if !UNITY_EDITOR && UNITY_METRO
         private async void _sendData(byte[] data, string hostName, int port) {
-            await udpClient.SendAsync(data, data.Length, hostName, port);
-
             using (var stream = await udpClient.GetOutputStreamAsync(new HostName(hostName), port.ToString())) {
                 using (var writer = new DataWriter(stream)) {
                     writer.WriteBytes(data);
                     await writer.StoreAsync();
                 }
             }
+        }
 #else
         private void _sendData(byte[] data, string hostName, int port) {
-            udpClient.Send(data, data.Length, hostName, port); 
-#endif
+            udpClient.Send(data, data.Length, hostName, port);
         }
+#endif
 
         private void Register() {
             RegisterObject regObj = new RegisterObject();
@@ -500,7 +502,6 @@ namespace oi.core.network {
                         }
                     }
                     if (nextPacket.Length != 0) {
-
 #if !UNITY_EDITOR && UNITY_METRO
                         await _sendData(nextPacket, _remoteAddress, _remotePort);
 #else
