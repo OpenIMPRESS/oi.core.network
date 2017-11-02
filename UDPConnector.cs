@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using System.IO;
+
 using System.Threading;
 using System.Text;
 using System.Linq;
@@ -56,8 +57,10 @@ namespace oi.core.network {
         private string UID;
         private string localIP = "";
 
+
         private bool _sendRunning = false;
         ManualResetEvent send_MRSTE = new ManualResetEvent(false);
+
         private bool _listenRunning = false;
         private Queue<byte[]> _sendQueue = new Queue<byte[]>();
         private Queue<byte[]> _receiveQueue = new Queue<byte[]>();
@@ -87,11 +90,10 @@ namespace oi.core.network {
         private Task _listenTask;
 #else
         private UdpClient udpClient;
-	    private Thread _sendThread;
-	    private Thread _listenThread;
+        private Thread _sendThread;
+        private Thread _listenThread;
 #endif
 
-        // Use this for initialization
 #if !UNITY_EDITOR && UNITY_METRO
         async void Start() {
 #else
@@ -103,15 +105,16 @@ namespace oi.core.network {
             localIP = GetLocalIPAddress();
             UID = SystemInfo.deviceUniqueIdentifier;
 
+
 #if !UNITY_EDITOR && UNITY_METRO
             _listenTask = Task.Run(() => DataListener());
             await Task.Delay(1000);
             _sendTask = Task.Run(() => DataSender());
 #else
-		_sendThread = new Thread(DataSender);
-		_sendThread.Start();
-        _listenThread = new Thread(DataListener);
-		_listenThread.Start();
+            _sendThread = new Thread(DataSender);
+            _sendThread.Start();
+            _listenThread = new Thread(DataListener);
+            _listenThread.Start();
 #endif
         }
 
@@ -143,8 +146,8 @@ namespace oi.core.network {
 
         UInt32 packageSequenceID = 0;
         public void SendData(byte[] nextPacket) {
-            if (nextPacket.Length != 0 && OnDataOut != null)
-                OnDataOut.Invoke(nextPacket);
+            if (nextPacket.Length != 0)
+                if (OnDataOut != null) OnDataOut.Invoke(nextPacket);
 
             if (connected) {
                 if (nextPacket.Length != 0) {
@@ -208,14 +211,14 @@ namespace oi.core.network {
         public static string GetLocalIPAddress() {
             string localIP = "";
 #if !UNITY_EDITOR && UNITY_METRO
-            foreach (HostName localHostName in NetworkInformation.GetHostNames()) {
-                if (localHostName.IPInformation != null) {
-                    if (localHostName.Type == HostNameType.Ipv4) {
-                        localIP = localHostName.ToString();
-                        break;
-                    }
+        foreach (HostName localHostName in NetworkInformation.GetHostNames()) {
+            if (localHostName.IPInformation != null) {
+                if (localHostName.Type == HostNameType.Ipv4) {
+                    localIP = localHostName.ToString();
+                    break;
                 }
             }
+        }
 #else
             using (Socket socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, 0)) {
                 socket.Connect("8.8.8.8", 65530);
@@ -227,21 +230,19 @@ namespace oi.core.network {
         }
 
         //------------- LISTEN STUFF -----------------
-
-
 #if !UNITY_EDITOR && UNITY_METRO
         private async Task DataListener() {
             udpClient = new DatagramSocket();
             udpClient.MessageReceived += Listener_MessageReceived;
             try {
                 await udpClient.BindEndpointAsync(null, "0");
-                if (debug) Debug.Log("Listening on port: " + udpClient.Information.LocalPort);
+                if(debug) Debug.Log("Listening on port: " + udpClient.Information.LocalPort);
             } catch (Exception e) {
-                if (debug) Debug.Log("DATA LISTENER START EXCEPTION: " + e.ToString());
-                if (debug) Debug.Log(SocketError.GetStatus(e.HResult).ToString());
+                if(debug) Debug.Log("DATA LISTENER START EXCEPTION: " + e.ToString());
+                if(debug) Debug.Log(SocketError.GetStatus(e.HResult).ToString());
                 return;
             }
-
+        }
 #else
         private void DataListener() {
             IPEndPoint anyIP = new IPEndPoint(IPAddress.Any, 0);
@@ -262,33 +263,34 @@ namespace oi.core.network {
             }
             udpClient.Close();
             if (debug) Debug.Log("DataListener Stopped");
-#endif
         }
+#endif
+
 
 #if !UNITY_EDITOR && UNITY_METRO
-        private async void Listener_MessageReceived(DatagramSocket sender, DatagramSocketMessageReceivedEventArgs args) {
-            try {
-                Stream streamIn = args.GetDataStream().AsStreamForRead();
-                MemoryStream ms = ToMemoryStream(streamIn);
-                byte[] receivedPackage = ms.ToArray();
-                HandleReceivedData(receivedPackage);
-            } catch (Exception e) {
-                if (debug) Debug.Log("DATA LISTENER EXCEPTION: " + e.ToString());
-                if (debug) Debug.Log(SocketError.GetStatus(e.HResult).ToString());
-                return;
+    private async void Listener_MessageReceived(DatagramSocket sender, DatagramSocketMessageReceivedEventArgs args) {
+        try {
+            Stream streamIn = args.GetDataStream().AsStreamForRead();
+            MemoryStream ms = ToMemoryStream(streamIn);
+            byte[] receivedPackage = ms.ToArray();
+            HandleReceivedData(receivedPackage);
+        } catch (Exception e) {
+            if(debug) Debug.Log("DATA LISTENER EXCEPTION: " + e.ToString());
+            if(debug) Debug.Log(SocketError.GetStatus(e.HResult).ToString());
+            return;
+        }
+    }
+    static MemoryStream ToMemoryStream(Stream input) {
+        try {                                         // Read and write in
+            byte[] block = new byte[0x1000];       // blocks of 4K.
+            MemoryStream ms = new MemoryStream();
+            while (true) {
+                int bytesRead = input.Read(block, 0, block.Length);
+                if (bytesRead == 0) return ms;
+                ms.Write(block, 0, bytesRead);
             }
-        }
-        static MemoryStream ToMemoryStream(Stream input) {
-            try {                                         // Read and write in
-                byte[] block = new byte[0x1000];       // blocks of 4K.
-                MemoryStream ms = new MemoryStream();
-                while (true) {
-                    int bytesRead = input.Read(block, 0, block.Length);
-                    if (bytesRead == 0) return ms;
-                    ms.Write(block, 0, bytesRead);
-                }
-            } finally { }
-        }
+        } finally { }
+    }
 #endif
 
 
@@ -404,7 +406,7 @@ namespace oi.core.network {
         }
 #else
         private void _sendData(byte[] data, string hostName, int port) {
-            udpClient.Send(data, data.Length, hostName, port); 
+            udpClient.Send(data, data.Length, hostName, port);
         }
 #endif
 
@@ -448,6 +450,7 @@ namespace oi.core.network {
                         if (debug) Debug.Log("DataSender Sent Data");
                     }
                 }
+
             }
             if (debug) Debug.Log("DataSender Stopped");
         }
