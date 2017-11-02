@@ -304,6 +304,8 @@ namespace oi.core.network {
         private void DataListener() {
             IPEndPoint anyIP = new IPEndPoint(IPAddress.Any, 0);
             udpClient = new UdpClient(anyIP);
+            udpClient.Client.ReceiveBufferSize = 65507;
+            udpClient.Client.SendBufferSize = 65507;
             int listenPort = ((IPEndPoint)udpClient.Client.LocalEndPoint).Port;
             if (debugLevel > 0) Debug.Log("Client listening on " + listenPort);
 
@@ -506,6 +508,7 @@ namespace oi.core.network {
                         await _sendData(nextPacket, _remoteAddress, _remotePort);
 #else
                         _sendData(nextPacket, _remoteAddress, _remotePort);
+                        //Thread.Sleep(50);
 #endif
                     }
                 }
