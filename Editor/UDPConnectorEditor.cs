@@ -15,7 +15,8 @@ namespace oi.core.network.editor {
 		SerializedProperty UseMatchmakingServerSP;
 		SerializedProperty ManualHostNameSP;
 		SerializedProperty ManualPortSP;
-		SerializedProperty SocketIDSP;
+        SerializedProperty ManualListenPortSP;
+        SerializedProperty SocketIDSP;
 		SerializedProperty IsSenderSP;
 		
 
@@ -25,7 +26,8 @@ namespace oi.core.network.editor {
 			UseMatchmakingServerSP = serializedObject.FindProperty("UseMatchmakingServer");
 			ManualHostNameSP = serializedObject.FindProperty("ManualHostName");
 			ManualPortSP = serializedObject.FindProperty("ManualPort");
-			SocketIDSP = serializedObject.FindProperty("SocketID");
+            ManualListenPortSP = serializedObject.FindProperty("ManualListenPort");
+            SocketIDSP = serializedObject.FindProperty("SocketID");
 			IsSenderSP = serializedObject.FindProperty("IsSender");
 		}
 		
@@ -48,11 +50,13 @@ namespace oi.core.network.editor {
 
 			UseMatchmakingServerSP.boolValue = EditorGUILayout.Toggle("Use Matchmaking: ", udpc.UseMatchmakingServer);
 			if (!udpc.UseMatchmakingServer || Application.isPlaying) {
-				ManualHostNameSP.stringValue = EditorGUILayout.TextField("Host Name:",
+				ManualHostNameSP.stringValue = EditorGUILayout.TextField("Send Host:",
 					Application.isPlaying ? udpc._remoteAddress : udpc.ManualHostName);
-				ManualPortSP.intValue = EditorGUILayout.IntField("Port:",
+				ManualPortSP.intValue = EditorGUILayout.IntField("Send Port:",
 					Application.isPlaying ? udpc._remotePort : udpc.ManualPort);
-			}
+                ManualListenPortSP.intValue = EditorGUILayout.IntField("Listen Port:",
+                    Application.isPlaying ? udpc._listenPort : udpc.ManualListenPort);
+            }
 			
 			SocketIDSP.stringValue = EditorGUILayout.TextField("Socket ID:", udpc.SocketID);
 			IsSenderSP.boolValue = EditorGUILayout.Toggle("Is Sender:", udpc.IsSender);

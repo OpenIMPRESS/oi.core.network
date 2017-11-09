@@ -50,6 +50,7 @@ namespace oi.core.network {
         public bool UseMatchmakingServer = true;
         public string ManualHostName = "";
         public int ManualPort;
+        public int ManualListenPort;
         public bool IsSender;
         // =======================================
 
@@ -60,6 +61,7 @@ namespace oi.core.network {
         // Socket Connection (From MM or manually set)
         public string _remoteAddress { get; private set; }
         public int _remotePort { get; private set; }
+        public int _listenPort { get; private set; }
         private bool _useMatchmakingServer;
 
         // MM Server
@@ -153,6 +155,7 @@ namespace oi.core.network {
             if (!_useMatchmakingServer) {
                 _remoteAddress = ManualHostName;
                 _remotePort = ManualPort;
+                _listenPort = ManualListenPort;
             }
             _isSender = IsSender;
             _socketID = SocketID;
@@ -294,7 +297,12 @@ namespace oi.core.network {
             udpClient = new DatagramSocket();
             udpClient.MessageReceived += Listener_MessageReceived;
             try {
-                await udpClient.BindEndpointAsync(null, "0");
+                
+                if (!_useMatchmakingServer) {
+                    await udpClient.BindEndpointAsync(null, "0");
+                } else {
+                    await udpClient.BindEndpointAsync(null, _listenPort.ToString());
+                }
                 if(debugLevel > 0) Debug.Log("Listening on port: " + udpClient.Information.LocalPort);
             } catch (Exception e) {
                 if(debugLevel > 0) Debug.Log("DATA LISTENER START EXCEPTION: " + e.ToString());
@@ -305,11 +313,13 @@ namespace oi.core.network {
 #else
         private void DataListener() {
             IPEndPoint anyIP = new IPEndPoint(IPAddress.Any, 0);
+            if (!_useMatchmakingServer) anyIP = new IPEndPoint(IPAddress.Any, _listenPort);
             udpClient = new UdpClient(anyIP);
+
             udpClient.Client.ReceiveBufferSize = 65507;
             udpClient.Client.SendBufferSize = 65507;
-            int listenPort = ((IPEndPoint)udpClient.Client.LocalEndPoint).Port;
-            if (debugLevel > 0) Debug.Log("Client listening on " + listenPort);
+            _listenPort = ((IPEndPoint)udpClient.Client.LocalEndPoint).Port;
+            if (debugLevel > 0) Debug.Log("Client listening on " + _listenPort);
 
             _listenRunning = true;
             while (_listenRunning) {
