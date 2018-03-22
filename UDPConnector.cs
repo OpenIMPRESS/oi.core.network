@@ -19,19 +19,34 @@ using System.Net;
 using System.Net.Sockets;
 #endif
 
+/* TODO
+ * clients list/array/dict
+ * regular punch to all clients (increment sequenceID)
+ * regular register to MM server -> in case something changed and MM can't reach you
+ */
+
 namespace oi.core.network {
+
+    public enum PacketType : short {
+        MM_JSON =   0x0101,
+        MM_EMPTY =  0x0105
+    }
+
 
     [Serializable]
     public class RegisterObject {
-        public string packageType = "register";
+        public string type = "register";
         public string socketID;
-        public bool isSender;
+        public string role;
+        public string exp;
+        public string session;
+        public string name;
         public string localIP;
         public string UID;
     }
 
     [Serializable]
-    public class AnswerObject {
+    public class AnswerObject {   // todo: endpoint array from MM
         public string type;
         public string address;
         public int port;
@@ -43,6 +58,16 @@ namespace oi.core.network {
 
         public delegate void _DataOut(byte[] data);
         public event _DataOut OnDataOut;
+
+        private struct Endpoint {
+            public string address;
+            public int port;
+        }
+
+        private struct SendObj {
+            public byte[] payload;
+            public Endpoint[] endpoints;
+        }
 
         // Public settings, applied in Start()
         public int debugLevel;
@@ -71,12 +96,14 @@ namespace oi.core.network {
         private string UID;
         private string localIP = "";
 
+        private UInt32 sourceID;
+
 
         private bool _sendRunning = false;
         AutoResetEvent send_ResetEvent = new AutoResetEvent(false);
 
         private bool _listenRunning = false;
-        private Queue<byte[]> _sendQueue = new Queue<byte[]>();
+        private Queue<SendObj> _sendQueue = new Queue<SendObj>();
         private System.Object _sendQueueLock = new System.Object();  
         private Queue<byte[]> _receiveQueue = new Queue<byte[]>();
         private System.Object _receiveQueueLock = new System.Object();  
@@ -151,6 +178,8 @@ namespace oi.core.network {
             _serverPort = sm.GetMMPort();
             connected = false;
 
+            sourceID = (uint)(UnityEngine.Random.Range(int.MinValue, int.MaxValue)) + int.MaxValue;
+
             _useMatchmakingServer = UseMatchmakingServer;
             if (!_useMatchmakingServer) {
                 _remoteAddress = ManualHostName;
@@ -206,43 +235,57 @@ namespace oi.core.network {
             }
         }
 
-        UInt32 packageSequenceID = 0;
-        public void SendData(byte[] nextPacket) {
-            if (nextPacket.Length != 0)
-                if (OnDataOut != null) OnDataOut.Invoke(nextPacket);
+        
+
+        UInt32 clientSequenceID = 0;
+        UInt32 MMSequenceID = 0;
+
+        private void SendData(PacketType packetType, UInt32 sequenceID, Endpoint[] endpoints, byte[] payload) {
+                if (payload.Length != 0)
+                if (OnDataOut != null) OnDataOut.Invoke(payload);
 
             if (connected) {
-                if (nextPacket.Length != 0) {
-                    packageSequenceID++;
-                    UInt32 partsAm = (UInt32)((nextPacket.Length + cutoffLength - 1) / cutoffLength); // Round Up The Result Of Integer Division
-                    UInt32 currentPart = 0;
+                if (payload.Length != 0) {
+                    clientSequenceID++;
+                    UInt16 packetTotParts = (UInt16)((payload.Length + cutoffLength - 1) / cutoffLength); // Round Up The Result Of Integer Division
+                    UInt16 currentPart = 0;
+                    UInt64 currentTimestamp = (UInt64)DateTime.UtcNow.Subtract(new DateTime(1970, 1, 1)).TotalMilliseconds;
 
-                    while (nextPacket.Length > 0) {
+                    while (payload.Length > 0) {
                         byte[] cutData = new byte[0];
-                        if (nextPacket.Length > cutoffLength) {
+                        if (payload.Length > cutoffLength) {
                             cutData = new byte[cutoffLength];
-                            Array.Copy(nextPacket, cutData, cutoffLength);
+                            Array.Copy(payload, cutData, cutoffLength);
 
-                            int remainingLen = nextPacket.Length - cutoffLength;
+                            int remainingLen = payload.Length - cutoffLength;
                             byte[] remainder = new byte[remainingLen];
-                            Array.Copy(nextPacket, cutoffLength, remainder, 0, remainingLen);
-                            nextPacket = remainder;
+                            Array.Copy(payload, cutoffLength, remainder, 0, remainingLen);
+                            payload = remainder;
                         } else {
-                            cutData = nextPacket;
-                            nextPacket = new byte[0];
+                            cutData = payload;
+                            payload = new byte[0];
                         }
 
                         byte[] sendBytes;
                         using (MemoryStream fs = new MemoryStream())
                         using (BinaryWriter writer = new BinaryWriter(fs)) {
-                            writer.Write((byte)20);
-                            writer.Write(packageSequenceID);
-                            writer.Write(partsAm);
+                            writer.Write((UInt16)packetType);
+                            writer.Write((UInt16)0x0000);
+                            writer.Write((UInt32)sourceID);
+                            writer.Write((UInt64)currentTimestamp);
+                            writer.Write(clientSequenceID);
+                            writer.Write(packetTotParts);
                             writer.Write(currentPart++);
                             writer.Write(cutData);
                             sendBytes = fs.ToArray();
                         }
-                        _BufferSendData(sendBytes);
+
+                        SendObj sendObj = new SendObj {
+                            payload = sendBytes,
+                            endpoints = endpoints
+                        };
+
+                        _BufferSendData(sendObj);
                     }
                 }
             }
@@ -456,9 +499,9 @@ namespace oi.core.network {
 
         //------------- SEND STUFF -----------------
 
-        private void _BufferSendData(byte[] dataBufferToSend) {
+        private void _BufferSendData(SendObj sendObj) {
             lock (_sendQueueLock) {
-                _sendQueue.Enqueue(dataBufferToSend);
+                _sendQueue.Enqueue(sendObj);
                 send_ResetEvent.Set();
             }
         }
@@ -479,11 +522,12 @@ namespace oi.core.network {
 #endif
 
         private void Register() {
-            RegisterObject regObj = new RegisterObject();
-            regObj.socketID = _socketID;
-            regObj.isSender = _isSender;
-            regObj.localIP = localIP;
-            regObj.UID = UID;
+            RegisterObject regObj = new RegisterObject {
+                socketID = _socketID,
+                isSender = _isSender,
+                localIP = localIP,
+                UID = UID
+            };
             string json = JsonUtility.ToJson(regObj);
             byte[] sendBytes = Encoding.ASCII.GetBytes((char)100 + json);
             _sendData(sendBytes, _serverHostname, _serverPort);
@@ -505,15 +549,16 @@ namespace oi.core.network {
                 send_ResetEvent.WaitOne();
                 int queueCount = 1;
                 while (queueCount > 0) {
-                    byte[] nextPacket = new byte[0];
+                    SendObj nextPacket = new SendObj();
                     lock (_sendQueueLock) {
                         queueCount = _sendQueue.Count;
                         if (queueCount > 0) {
                             nextPacket = _sendQueue.Dequeue();
                         }
                     }
-                    if (nextPacket.Length != 0) {
-                        _sendData(nextPacket, _remoteAddress, _remotePort);
+                    if (nextPacket.payload.Length != 0) {
+                        foreach(Endpoint endpoint in nextPacket.endpoints)
+                            _sendData(nextPacket.payload, endpoint.address, endpoint.port);
                     }
                 }
 
