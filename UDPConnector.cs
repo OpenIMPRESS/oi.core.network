@@ -28,8 +28,8 @@ using System.Net.Sockets;
 namespace oi.core.network {
 
     public enum PacketType : short {
-        MM_JSON =   0x0101,
-        MM_EMPTY =  0x0105
+        MM_JSON = 0x0101,
+        MM_EMPTY = 0x0105
     }
 
 
@@ -69,6 +69,15 @@ namespace oi.core.network {
             public Endpoint[] endpoints;
         }
 
+        private struct ReceiveObj {
+            public UInt32 packetType;
+            public UInt64 timestamp;
+            public UInt16 sequenceID;
+            public byte[] payload;
+        }
+
+        private List<Endpoint> endpoints = new List<Endpoint>();
+
         // Public settings, applied in Start()
         public int debugLevel;
         public string SocketID;
@@ -76,18 +85,20 @@ namespace oi.core.network {
         public string ManualHostName = "";
         public int ManualPort;
         public int ManualListenPort;
-        public bool IsSender;
+        public string role;  // consumer - producer - all
         // =======================================
 
         // Socket Description
         private string _socketID;
-        private bool _isSender;
+        private string _role;
 
         // Socket Connection (From MM or manually set)
         public string _remoteAddress { get; private set; }
         public int _remotePort { get; private set; }
         public int _listenPort { get; private set; }
         private bool _useMatchmakingServer;
+        private UInt32 _sourceID;
+
 
         // MM Server
         private string _serverHostname;
@@ -96,7 +107,6 @@ namespace oi.core.network {
         private string UID;
         private string localIP = "";
 
-        private UInt32 sourceID;
 
 
         private bool _sendRunning = false;
@@ -104,9 +114,9 @@ namespace oi.core.network {
 
         private bool _listenRunning = false;
         private Queue<SendObj> _sendQueue = new Queue<SendObj>();
-        private System.Object _sendQueueLock = new System.Object();  
+        private System.Object _sendQueueLock = new System.Object();
         private Queue<byte[]> _receiveQueue = new Queue<byte[]>();
-        private System.Object _receiveQueueLock = new System.Object();  
+        private System.Object _receiveQueueLock = new System.Object();
         Dictionary<UInt32, byte[][]> _dataParts = new Dictionary<UInt32, byte[][]>();
 
         private int headerLen = 13;
@@ -165,7 +175,7 @@ namespace oi.core.network {
 #if !UNITY_EDITOR && UNITY_METRO
         async void Start() {
 #else
-        
+
         void Start() {
 #endif
             sm = FindObjectOfType<SessionManager>();
@@ -178,7 +188,7 @@ namespace oi.core.network {
             _serverPort = sm.GetMMPort();
             connected = false;
 
-            sourceID = (uint)(UnityEngine.Random.Range(int.MinValue, int.MaxValue)) + int.MaxValue;
+            _sourceID = (uint)(UnityEngine.Random.Range(int.MinValue, int.MaxValue)) + int.MaxValue;
 
             _useMatchmakingServer = UseMatchmakingServer;
             if (!_useMatchmakingServer) {
@@ -186,14 +196,14 @@ namespace oi.core.network {
                 _remotePort = ManualPort;
                 _listenPort = ManualListenPort;
             }
-            _isSender = IsSender;
+            _role = role;
             _socketID = SocketID;
 
             cutoffLength = 60000 - headerLen;
             localIP = GetLocalIPAddress();
             UID = sm.GetGUID();
             if (debugLevel > 0) {
-                UID = UID+guidSuffix;
+                UID = UID + guidSuffix;
             }
 
 
@@ -235,13 +245,13 @@ namespace oi.core.network {
             }
         }
 
-        
+
 
         UInt32 clientSequenceID = 0;
         UInt32 MMSequenceID = 0;
 
         private void SendData(PacketType packetType, UInt32 sequenceID, Endpoint[] endpoints, byte[] payload) {
-                if (payload.Length != 0)
+            if (payload.Length != 0)
                 if (OnDataOut != null) OnDataOut.Invoke(payload);
 
             if (connected) {
@@ -271,7 +281,7 @@ namespace oi.core.network {
                         using (BinaryWriter writer = new BinaryWriter(fs)) {
                             writer.Write((UInt16)packetType);
                             writer.Write((UInt16)0x0000);
-                            writer.Write((UInt32)sourceID);
+                            writer.Write((UInt32)_sourceID);
                             writer.Write((UInt64)currentTimestamp);
                             writer.Write(clientSequenceID);
                             writer.Write(packetTotParts);
@@ -372,7 +382,7 @@ namespace oi.core.network {
                     byte[] receivedPackage = udpClient.Receive(ref anyIP);
                     HandleReceivedData(receivedPackage);
                 } catch (Exception e) {
-                    if (_listenRunning) Debug.LogWarning("Exception in UDPConnector.DataListener: "+e);
+                    if (_listenRunning) Debug.LogWarning("Exception in UDPConnector.DataListener: " + e);
                 }
             }
             udpClient.Close();
@@ -524,7 +534,7 @@ namespace oi.core.network {
         private void Register() {
             RegisterObject regObj = new RegisterObject {
                 socketID = _socketID,
-                isSender = _isSender,
+                role = _role,
                 localIP = localIP,
                 UID = UID
             };
@@ -557,7 +567,7 @@ namespace oi.core.network {
                         }
                     }
                     if (nextPacket.payload.Length != 0) {
-                        foreach(Endpoint endpoint in nextPacket.endpoints)
+                        foreach (Endpoint endpoint in nextPacket.endpoints)
                             _sendData(nextPacket.payload, endpoint.address, endpoint.port);
                     }
                 }
