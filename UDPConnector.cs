@@ -1,4 +1,21 @@
-﻿using System;
+﻿/*
+This file is part of the OpenIMPRESS project.
+
+OpenIMPRESS is free software: you can redistribute it and/or modify
+it under the terms of the Lesser GNU Lesser General Public License as published
+by the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+OpenIMPRESS is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU Lesser General Public License for more details.
+
+You should have received a copy of the GNU Lesser General Public License
+along with OpenIMPRESS. If not, see <https://www.gnu.org/licenses/>.
+*/
+
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
@@ -21,6 +38,17 @@ using System.Net.Sockets;
 
 namespace oi.core.network {
 
+
+    public class OIMSG {
+        public UInt32 sequenceID;
+        public UInt32 partsAm;
+        public UInt32 currentPart;
+        public UInt64 timestamp;
+        public byte msgFamily;
+        public byte msgType;
+        public byte[] data;
+    }
+
     [Serializable]
     public class RegisterObject {
         public string packageType = "register";
@@ -38,10 +66,10 @@ namespace oi.core.network {
     }
 
     public class UDPConnector : MonoBehaviour {
-        public delegate void _DataIn(byte[] data);
+        public delegate void _DataIn(OIMSG msg);
         public event _DataIn OnDataIn;
 
-        public delegate void _DataOut(byte[] data);
+        public delegate void _DataOut(OIMSG msg);
         public event _DataOut OnDataOut;
 
         // Public settings, applied in Start()
@@ -75,14 +103,15 @@ namespace oi.core.network {
         private bool _sendRunning = false;
         AutoResetEvent send_ResetEvent = new AutoResetEvent(false);
 
+
         private bool _listenRunning = false;
         private Queue<byte[]> _sendQueue = new Queue<byte[]>();
         private System.Object _sendQueueLock = new System.Object();  
-        private Queue<byte[]> _receiveQueue = new Queue<byte[]>();
+        private Queue<OIMSG> _receiveQueue = new Queue<OIMSG>();
         private System.Object _receiveQueueLock = new System.Object();  
         Dictionary<UInt32, byte[][]> _dataParts = new Dictionary<UInt32, byte[][]>();
 
-        private int headerLen = 13;
+        private int headerLen = 24;
         private int cutoffLength;
 
         private float registerInterval = 2F;
@@ -207,38 +236,55 @@ namespace oi.core.network {
         }
 
         UInt32 packageSequenceID = 0;
+        public void SendData(byte[] nextPacket, byte msgFamily, byte msgType) {
+            OIMSG msg = new OIMSG();
+            msg.data = nextPacket;
+            msg.msgFamily = msgFamily;
+            msg.msgType = msgType;
+            msg.timestamp = NOW();
+            SendData(msg);
+        }
+
+
         public void SendData(byte[] nextPacket) {
-            if (nextPacket.Length != 0)
-                if (OnDataOut != null) OnDataOut.Invoke(nextPacket);
+            SendData(nextPacket, 0x14, 0x00);
+        }
+
+        public void SendData(OIMSG msg) {
+            if (msg.data.Length != 0)
+                if (OnDataOut != null) OnDataOut.Invoke(msg);
 
             if (connected) {
-                if (nextPacket.Length != 0) {
+                if (msg.data.Length != 0) {
                     packageSequenceID++;
-                    UInt32 partsAm = (UInt32)((nextPacket.Length + cutoffLength - 1) / cutoffLength); // Round Up The Result Of Integer Division
+                    UInt32 partsAm = (UInt32)((msg.data.Length + cutoffLength - 1) / cutoffLength); // Round Up The Result Of Integer Division
                     UInt32 currentPart = 0;
 
-                    while (nextPacket.Length > 0) {
+                    while (msg.data.Length > 0) {
                         byte[] cutData = new byte[0];
-                        if (nextPacket.Length > cutoffLength) {
+                        if (msg.data.Length > cutoffLength) {
                             cutData = new byte[cutoffLength];
-                            Array.Copy(nextPacket, cutData, cutoffLength);
+                            Array.Copy(msg.data, cutData, cutoffLength);
 
-                            int remainingLen = nextPacket.Length - cutoffLength;
+                            int remainingLen = msg.data.Length - cutoffLength;
                             byte[] remainder = new byte[remainingLen];
-                            Array.Copy(nextPacket, cutoffLength, remainder, 0, remainingLen);
-                            nextPacket = remainder;
+                            Array.Copy(msg.data, cutoffLength, remainder, 0, remainingLen);
+                            msg.data = remainder;
                         } else {
-                            cutData = nextPacket;
-                            nextPacket = new byte[0];
+                            cutData = msg.data;
+                            msg.data = new byte[0];
                         }
 
                         byte[] sendBytes;
                         using (MemoryStream fs = new MemoryStream())
                         using (BinaryWriter writer = new BinaryWriter(fs)) {
-                            writer.Write((byte)20);
+                            writer.Write((byte)msg.msgFamily);
+                            writer.Write((byte)msg.msgType);
+                            writer.Write((UInt16)0);
                             writer.Write(packageSequenceID);
                             writer.Write(partsAm);
                             writer.Write(currentPart++);
+                            writer.Write((UInt64) msg.timestamp);
                             writer.Write(cutData);
                             sendBytes = fs.ToArray();
                         }
@@ -248,14 +294,17 @@ namespace oi.core.network {
             }
         }
 
-        public byte[] GetNewData() {
-            byte[] returnBytes = null;
+        public OIMSG GetNewData() {
+            OIMSG returnMsg = null;
+            //byte[] returnBytes = null;
             lock (_receiveQueueLock) {
                 if (_receiveQueue.Count > 0) {
-                    returnBytes = _receiveQueue.Dequeue();
+                    //returnBytes = _receiveQueue.Dequeue();
+                    returnMsg = _receiveQueue.Dequeue();
                 }
             }
-            return returnBytes;
+            //return returnBytes;
+            return returnMsg;
         }
 
         public void Close() {
@@ -367,7 +416,7 @@ namespace oi.core.network {
 
 
         private void HandleReceivedData(byte[] inData) {
-            if (debugLevel > 1) {
+            if (debugLevel > 2) {
                 string dString = Encoding.ASCII.GetString(inData);
                 Debug.Log(dString.Length + "  " + (byte)inData[0] + "  " + dString);
             }
@@ -378,6 +427,7 @@ namespace oi.core.network {
                 try {
                     AnswerObject obj = JsonUtility.FromJson<AnswerObject>(json);
                     if (obj.type == "answer") {
+                        if (debugLevel > 1) Debug.Log("MM Answer: "+obj.address+":"+obj.port);
                         _remoteAddress = obj.address;
                         _remotePort = obj.port;
                         Punch();
@@ -389,41 +439,44 @@ namespace oi.core.network {
                     }
                     return; // return if package was a json package
                 } catch (Exception e) { Debug.Log(e.ToString()); }
-            } else if (magicByte == 20) {
+            } else { //if (magicByte == 0x14) {
                 lastReceivedHB = currentTime;
-                byte packageType;
-                UInt32 packageSequenceID;
-                UInt32 partsAm;
-                UInt32 currentPart;
+                OIMSG msg = new OIMSG();
 
                 using (MemoryStream str = new MemoryStream(inData)) {
                     using (BinaryReader reader = new BinaryReader(str)) {
-                        packageType = reader.ReadByte();
-                        packageSequenceID = reader.ReadUInt32();
-                        partsAm = reader.ReadUInt32();
-                        currentPart = reader.ReadUInt32();
+                        msg.msgFamily = reader.ReadByte();
+                        msg.msgType = reader.ReadByte();
+                        UInt16 unused2 = reader.ReadUInt16();
+                        msg.sequenceID = reader.ReadUInt32();
+                        msg.partsAm = reader.ReadUInt32();
+                        msg.currentPart = reader.ReadUInt32();
+                        msg.timestamp = reader.ReadUInt64();
                     }
                 }
-                byte[] data = new byte[inData.Length - headerLen];
-                Array.Copy(inData, headerLen, data, 0, inData.Length - headerLen);
 
-                if (debugLevel > 1) Debug.Log("packageSequenceID:  " + packageSequenceID + ", partsAm: " + partsAm + ", currentPart: " + currentPart + ", size: " + inData.Length);
-                if (partsAm == 1) {
-                    lock (_receiveQueueLock)
-                        _receiveQueue.Enqueue(data);
-                    if (OnDataIn != null) OnDataIn.Invoke(data);
-                } else if (partsAm > 1) {
-                    if (!_dataParts.ContainsKey(packageSequenceID)) {
-                        byte[][] parts = new byte[partsAm][];
-                        parts[currentPart] = data;
-                        _dataParts.Add(packageSequenceID, parts);
+                msg.data = new byte[inData.Length - headerLen];
+                Array.Copy(inData, headerLen, msg.data, 0, inData.Length - headerLen);
+
+                //if (debugLevel > 1) Debug.Log("family: "+msg.msgFamily+" type: " +msg.msgType+" packageSequenceID:  " + msg.sequenceID + ", partsAm: " + msg.partsAm + ", currentPart: " + msg.currentPart + ", size: " + inData.Length);
+                if (debugLevel > 1) Debug.Log("family: "+msg.msgFamily+" type: " +msg.msgType + ", partsAm: " + msg.partsAm + ", currentPart: " + msg.currentPart);
+                if (msg.partsAm == 1) {
+                    lock (_receiveQueueLock) {
+                        _receiveQueue.Enqueue(msg);
+                    }
+                    if (OnDataIn != null) OnDataIn.Invoke(msg);
+                } else if (msg.partsAm > 1) {
+                    if (!_dataParts.ContainsKey(msg.sequenceID)) {
+                        byte[][] parts = new byte[msg.partsAm][];
+                        parts[msg.currentPart] = msg.data;
+                        _dataParts.Add(msg.sequenceID, parts);
                     } else {
-                        byte[][] parts = _dataParts[packageSequenceID];
-                        parts[currentPart] = data;
+                        byte[][] parts = _dataParts[msg.sequenceID];
+                        parts[msg.currentPart] = msg.data;
 
                         bool dataComplete = true;
                         int concatDataSize = 0;
-                        for (int i = 0; i < partsAm; i++) {
+                        for (int i = 0; i < msg.partsAm; i++) {
                             if (parts[i] == null) {
                                 dataComplete = false;
                                 break;
@@ -431,26 +484,30 @@ namespace oi.core.network {
                             concatDataSize += parts[i].Length;
                         }
                         if (dataComplete) {
-                            _dataParts.Remove(packageSequenceID);
+                            _dataParts.Remove(msg.sequenceID);
                             byte[] concatData = new byte[concatDataSize];
                             int idx = 0;
-                            for (int i = 0; i < partsAm; i++) {
+                            for (int i = 0; i < msg.partsAm; i++) {
                                 Array.Copy(parts[i], 0, concatData, idx, parts[i].Length);
                                 idx += parts[i].Length;
                             }
 
+                            msg.data = concatData;
                             lock (_receiveQueueLock)
-                                _receiveQueue.Enqueue(concatData);
-                            if (OnDataIn != null) OnDataIn.Invoke(concatData);
+                                _receiveQueue.Enqueue(msg);
+                            if (OnDataIn != null) OnDataIn.Invoke(msg);
                         }
                     }
                 }
-            } else {
+            } 
+            /*
+            else {
                 lastReceivedHB = currentTime;
                 if (OnDataIn != null) OnDataIn.Invoke(inData);
                 lock (_receiveQueueLock)
                     _receiveQueue.Enqueue(inData);
             }
+             */
         }
 
 
@@ -492,6 +549,10 @@ namespace oi.core.network {
         private void Punch() {
             byte[] sendBytes = Encoding.ASCII.GetBytes((char)100 + "{\"type\":\"punch\"}");
             _sendData(sendBytes, _remoteAddress, _remotePort);
+        }
+
+        public UInt64 NOW() {
+            return ((UInt64) (DateTime.UtcNow.Subtract(new DateTime(1970, 1, 1))).TotalMilliseconds);
         }
 
 #if !UNITY_EDITOR && UNITY_METRO
