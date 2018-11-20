@@ -55,7 +55,7 @@ namespace oi.core.network {
     }
 
     public enum OI_MSGTYPE_DATA {
-        DEFAULT=0x00
+        DEFAULT = 0x00
     }
 
     public enum OI_MSGTYPE_MOCAP {
@@ -176,9 +176,9 @@ namespace oi.core.network {
 
         private bool _listenRunning = false;
         private Queue<byte[]> _sendQueue = new Queue<byte[]>();
-        private System.Object _sendQueueLock = new System.Object();  
+        private System.Object _sendQueueLock = new System.Object();
         private Queue<OIMSG> _receiveQueue = new Queue<OIMSG>();
-        private System.Object _receiveQueueLock = new System.Object();  
+        private System.Object _receiveQueueLock = new System.Object();
         Dictionary<UInt32, byte[][]> _dataParts = new Dictionary<UInt32, byte[][]>();
 
         private int headerLen = 24;
@@ -241,7 +241,6 @@ namespace oi.core.network {
         void Start() {
 #endif
             sm = FindObjectOfType<SessionManager>();
-            Debug.Log("HELLO WORLD.");
             if (sm == null) {
                 Debug.LogError("Please add and configure a SessionManager component to the scene.");
                 return;
@@ -260,17 +259,17 @@ namespace oi.core.network {
             _isSender = IsSender;
             _socketID = SocketID;
 
-            cutoffLength = 60000 - headerLen;
+            //cutoffLength = 60000 - headerLen;
             localIP = GetLocalIPAddress();
             UID = sm.GetGUID();
             if (debugLevel > 0) {
-                UID = UID+guidSuffix;
+                UID = UID + guidSuffix;
             }
 
-
 #if !UNITY_EDITOR && UNITY_METRO
+            await Task.Delay(UnityEngine.Random.Range(500, 1500));
             _listenTask = Task.Run(() => DataListener());
-            await Task.Delay(1000);
+            await Task.Delay(UnityEngine.Random.Range(500, 1500));
             _sendTask = Task.Run(() => DataSender());
 #else
             _sendThread = new Thread(DataSender);
@@ -301,8 +300,11 @@ namespace oi.core.network {
                         Register();
                     }
                 }
-            } else if (!connected) {
-                connected = true;
+            } else {
+                if (Time.time > lastSentHB + HBInterval) {
+                    lastSentHB = Time.time;
+                    Punch();
+                }
             }
         }
 
@@ -326,7 +328,7 @@ namespace oi.core.network {
                 if (msg.data.Length != 0) {
                     packageSequenceID++;
                     UInt32 partsAm = (UInt32)((msg.data.Length + cutoffLength - 1) / cutoffLength); // Round Up The Result Of Integer Division
-                    UInt32 currentPart = 0;
+                    UInt32 currentPart = 1;
 
                     while (msg.data.Length > 0) {
                         byte[] cutData = new byte[0];
@@ -351,12 +353,13 @@ namespace oi.core.network {
                             writer.Write((UInt16)0);
                             writer.Write(packageSequenceID);
                             writer.Write(partsAm);
-                            writer.Write(currentPart++);
-                            writer.Write((UInt64) msg.timestamp);
+                            writer.Write(currentPart);
+                            writer.Write((UInt64)msg.timestamp);
                             writer.Write(cutData);
                             sendBytes = fs.ToArray();
                         }
                         _BufferSendData(sendBytes);
+                        currentPart++;
                     }
                 }
             }
@@ -390,14 +393,14 @@ namespace oi.core.network {
         public static string GetLocalIPAddress() {
             string localIP = "";
 #if !UNITY_EDITOR && UNITY_METRO
-        foreach (HostName localHostName in NetworkInformation.GetHostNames()) {
-            if (localHostName.IPInformation != null) {
-                if (localHostName.Type == HostNameType.Ipv4) {
-                    localIP = localHostName.ToString();
-                    break;
+            foreach (HostName localHostName in NetworkInformation.GetHostNames()) {
+                if (localHostName.IPInformation != null) {
+                    if (localHostName.Type == HostNameType.Ipv4) {
+                        localIP = localHostName.ToString();
+                        break;
+                    }
                 }
             }
-        }
 #else
             using (Socket socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, 0)) {
                 socket.Connect("8.8.8.8", 65530);
@@ -412,18 +415,24 @@ namespace oi.core.network {
 #if !UNITY_EDITOR && UNITY_METRO
         private async Task DataListener() {
             udpClient = new DatagramSocket();
+            udpClient.Control.InboundBufferSizeInBytes = 65507;
+            //udpClient.Control.DontFragment = true;
+            //udpClient.Control.QualityOfService = SocketQualityOfService.LowLatency;
             udpClient.MessageReceived += Listener_MessageReceived;
             try {
-                
+
                 if (_useMatchmakingServer) {
                     await udpClient.BindEndpointAsync(null, "0");
                 } else {
                     await udpClient.BindEndpointAsync(null, _listenPort.ToString());
                 }
-                if(debugLevel > 0) Debug.Log("Listening on port: " + udpClient.Information.LocalPort);
+                //if(debugLevel > 0)
+                Debug.Log("Listening on port: " + udpClient.Information.LocalPort);
             } catch (Exception e) {
-                if(debugLevel > 0) Debug.Log("DATA LISTENER START EXCEPTION: " + e.ToString());
-                if(debugLevel > 0) Debug.Log(SocketError.GetStatus(e.HResult).ToString());
+                //if(debugLevel > 0)
+                Debug.Log("DATA LISTENER START EXCEPTION: " + e.ToString());
+                //if(debugLevel > 0)
+                Debug.Log(SocketError.GetStatus(e.HResult).ToString());
                 return;
             }
         }
@@ -440,10 +449,9 @@ namespace oi.core.network {
 
             _listenRunning = true;
             while (_listenRunning) {
-                //UdpReceiveResult receivedResults = await udpClient.ReceiveAsync();
-                //byte[] receivedPackage = receivedResults.Buffer;
+                IPEndPoint recvEP = new IPEndPoint(IPAddress.Any, 0);
                 try {
-                    byte[] receivedPackage = udpClient.Receive(ref anyIP);
+                    byte[] receivedPackage = udpClient.Receive(ref recvEP);
                     HandleReceivedData(receivedPackage);
                 } catch (Exception e) {
                     if (_listenRunning) Debug.LogWarning("Exception in UDPConnector.DataListener: "+e);
@@ -456,35 +464,35 @@ namespace oi.core.network {
 
 
 #if !UNITY_EDITOR && UNITY_METRO
-    private async void Listener_MessageReceived(DatagramSocket sender, DatagramSocketMessageReceivedEventArgs args) {
-        try {
-            Stream streamIn = args.GetDataStream().AsStreamForRead();
-            MemoryStream ms = ToMemoryStream(streamIn);
-            byte[] receivedPackage = ms.ToArray();
-            HandleReceivedData(receivedPackage);
-        } catch (Exception e) {
-            if(debugLevel > 0) Debug.Log("DATA LISTENER EXCEPTION: " + e.ToString());
-            if(debugLevel > 0) Debug.Log(SocketError.GetStatus(e.HResult).ToString());
-            return;
-        }
-    }
-    static MemoryStream ToMemoryStream(Stream input) {
-        try {                                         // Read and write in
-            byte[] block = new byte[0x1000];       // blocks of 4K.
-            MemoryStream ms = new MemoryStream();
-            while (true) {
-                int bytesRead = input.Read(block, 0, block.Length);
-                if (bytesRead == 0) return ms;
-                ms.Write(block, 0, bytesRead);
+        private void Listener_MessageReceived(DatagramSocket sender, DatagramSocketMessageReceivedEventArgs args) {
+            try {
+                Stream streamIn = args.GetDataStream().AsStreamForRead();
+                MemoryStream ms = ToMemoryStream(streamIn);
+                byte[] receivedPackage = ms.ToArray();
+                HandleReceivedData(receivedPackage);
+            } catch (Exception e) {
+                if (debugLevel > 0) Debug.Log("DATA LISTENER EXCEPTION: " + e.ToString());
+                if (debugLevel > 0) Debug.Log(SocketError.GetStatus(e.HResult).ToString());
+                return;
             }
-        } finally { }
-    }
+        }
+        static MemoryStream ToMemoryStream(Stream input) {
+            try {                                         // Read and write in
+                byte[] block = new byte[0x1000];       // blocks of 4K.
+                MemoryStream ms = new MemoryStream();
+                while (true) {
+                    int bytesRead = input.Read(block, 0, block.Length);
+                    if (bytesRead == 0) return ms;
+                    ms.Write(block, 0, bytesRead);
+                }
+            } finally { }
+        }
 #endif
 
 
 
         private void HandleReceivedData(byte[] inData) {
-            if (debugLevel > 2) {
+            if (debugLevel > 3) {
                 string dString = Encoding.ASCII.GetString(inData);
                 Debug.Log(dString.Length + "  " + (byte)inData[0] + "  " + dString);
             }
@@ -495,7 +503,7 @@ namespace oi.core.network {
                 try {
                     AnswerObject obj = JsonUtility.FromJson<AnswerObject>(json);
                     if (obj.type == "answer") {
-                        if (debugLevel > 1) Debug.Log("MM Answer: "+obj.address+":"+obj.port);
+                        if (debugLevel > 1) Debug.Log("MM Answer: " + obj.address + ":" + obj.port);
                         _remoteAddress = obj.address;
                         _remotePort = obj.port;
                         Punch();
@@ -527,7 +535,7 @@ namespace oi.core.network {
                 Array.Copy(inData, headerLen, msg.data, 0, inData.Length - headerLen);
 
                 //if (debugLevel > 1) Debug.Log("family: "+msg.msgFamily+" type: " +msg.msgType+" packageSequenceID:  " + msg.sequenceID + ", partsAm: " + msg.partsAm + ", currentPart: " + msg.currentPart + ", size: " + inData.Length);
-                if (debugLevel > 1) Debug.Log("family: "+msg.msgFamily+" type: " +msg.msgType + ", partsAm: " + msg.partsAm + ", currentPart: " + msg.currentPart);
+                if (debugLevel > 1) Debug.Log("family: " + msg.msgFamily + " type: " + msg.msgType + ", partsAm: " + msg.partsAm + ", currentPart: " + msg.currentPart);
                 if (msg.partsAm == 1) {
                     lock (_receiveQueueLock) {
                         _receiveQueue.Enqueue(msg);
@@ -536,11 +544,11 @@ namespace oi.core.network {
                 } else if (msg.partsAm > 1) {
                     if (!_dataParts.ContainsKey(msg.sequenceID)) {
                         byte[][] parts = new byte[msg.partsAm][];
-                        parts[msg.currentPart] = msg.data;
+                        parts[msg.currentPart-1] = msg.data;
                         _dataParts.Add(msg.sequenceID, parts);
                     } else {
                         byte[][] parts = _dataParts[msg.sequenceID];
-                        parts[msg.currentPart] = msg.data;
+                        parts[msg.currentPart-1] = msg.data;
 
                         bool dataComplete = true;
                         int concatDataSize = 0;
@@ -567,7 +575,7 @@ namespace oi.core.network {
                         }
                     }
                 }
-            } 
+            }
             /*
             else {
                 lastReceivedHB = currentTime;
@@ -594,8 +602,10 @@ namespace oi.core.network {
                 using (var writer = new DataWriter(stream)) {
                     writer.WriteBytes(data);
                     await writer.StoreAsync();
+                    await writer.FlushAsync();
                 }
             }
+            if (debugLevel > 3) Debug.Log("Sent bytes: " + data.Length + " host: " + hostName + " port: " + port);
         }
 #else
         private void _sendData(byte[] data, string hostName, int port) {
@@ -620,7 +630,7 @@ namespace oi.core.network {
         }
 
         public static UInt64 NOW() {
-            return ((UInt64) (DateTime.UtcNow.Subtract(new DateTime(1970, 1, 1))).TotalMilliseconds);
+            return ((UInt64)(DateTime.UtcNow.Subtract(new DateTime(1970, 1, 1))).TotalMilliseconds);
         }
 
 #if !UNITY_EDITOR && UNITY_METRO
