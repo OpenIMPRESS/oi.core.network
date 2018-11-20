@@ -97,7 +97,8 @@ namespace oi.core.network {
         TRANSFORM = 0x11,
         LINE_DRAWING = 0x21,
         MESH = 0x51,
-        SPATIAL_MESH = 0x55
+        SPATIAL_MESH_ADD = 0x55,
+        SPATIAL_MESH_REMOVE = 0x56
     }
 
     public class OIMSG {
