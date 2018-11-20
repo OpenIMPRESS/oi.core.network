@@ -38,6 +38,67 @@ using System.Net.Sockets;
 
 namespace oi.core.network {
 
+    public enum OI_MSGFAMILY {
+        MM = 0x64,
+        DATA = 0x14,
+
+        RGBD = 0x02,
+        RGBD_CMD = 0x12,
+
+        MOCAP = 0x03,
+        AUDIO = 0x04,
+        XR = 0x10
+    }
+
+    public enum OI_MSGTYPE_MM {
+
+    }
+
+    public enum OI_MSGTYPE_DATA {
+        DEFAULT=0x00
+    }
+
+    public enum OI_MSGTYPE_MOCAP {
+        OI_MSG_TYPE_MOCAP_CONFIG = 0x01,
+        OI_MSG_TYPE_MOCAP_BODY_FRAME_KINECTV1 = 0x12,
+        OI_MSG_TYPE_MOCAP_BODY_FRAME_KINECTV2 = 0x13,
+
+        // XSens, Vicon, OptiTrack, ...
+        OI_MSG_TYPE_HUMAN_BODY_FRAME = 0x21,
+        OI_MSG_TYPE_RIGIDBODY_FRAME = 0x22,
+
+        OI_MSG_TYPE_MOCAP_LEAP_MOTION_CONFIG = 0x41,
+        OI_MSG_TYPE_MOCAP_LEAP_MOTION_FRAME = 0x42
+    }
+
+    public enum OI_MSGTYPE_RGBD {
+        CONFIG = 0x01,
+        DEPTH = 0x11,
+        DEPTH_BLOCK = 0x12,
+        COLOR = 0x21,
+        COLOR_BLOCK = 0x22,
+        BODY_ID_TEXTURE = 0x51,
+        BODY_ID_TEXTURE_BLOCK = 0x52
+    }
+
+    public enum OI_MSGTYPE_RGBD_CMD {
+        REQUEST = 0x31,
+        REQUEST_JSON = 0x32, // TODO: replace with content format header...
+        RESPONSE = 0x41,
+        RESPONSE_JSON = 0x42 // TODO: replace with content format header...
+    }
+
+    public enum OI_MSGTYPE_AUDIO {
+        CONFIG = 0x01,
+        DEFAULT_FRAME = 0x11
+    }
+
+    public enum OI_MSGTYPE_XR {
+        TRANSFORM = 0x11,
+        LINE_DRAWING = 0x21,
+        MESH = 0x51,
+        SPATIAL_MESH = 0x55
+    }
 
     public class OIMSG {
         public UInt32 sequenceID;
@@ -47,6 +108,14 @@ namespace oi.core.network {
         public byte msgFamily;
         public byte msgType;
         public byte[] data;
+        public OIMSG() {
+        }
+        public OIMSG(byte msgFamily, byte msgType, byte[] data) {
+            this.data = data;
+            this.msgFamily = msgFamily;
+            this.msgType = msgType;
+            this.timestamp = UDPConnector.NOW();
+        }
     }
 
     [Serializable]
@@ -112,7 +181,7 @@ namespace oi.core.network {
         Dictionary<UInt32, byte[][]> _dataParts = new Dictionary<UInt32, byte[][]>();
 
         private int headerLen = 24;
-        private int cutoffLength;
+        private int cutoffLength = 60000; // TODO: parameterize udp packet size
 
         private float registerInterval = 2F;
         private float lastRegister = -1.5F;
@@ -171,6 +240,7 @@ namespace oi.core.network {
         void Start() {
 #endif
             sm = FindObjectOfType<SessionManager>();
+            Debug.Log("HELLO WORLD.");
             if (sm == null) {
                 Debug.LogError("Please add and configure a SessionManager component to the scene.");
                 return;
@@ -237,10 +307,7 @@ namespace oi.core.network {
 
         UInt32 packageSequenceID = 0;
         public void SendData(byte[] nextPacket, byte msgFamily, byte msgType) {
-            OIMSG msg = new OIMSG();
-            msg.data = nextPacket;
-            msg.msgFamily = msgFamily;
-            msg.msgType = msgType;
+            OIMSG msg = new OIMSG(msgFamily, msgType, nextPacket);
             msg.timestamp = NOW();
             SendData(msg);
         }
@@ -347,7 +414,7 @@ namespace oi.core.network {
             udpClient.MessageReceived += Listener_MessageReceived;
             try {
                 
-                if (!_useMatchmakingServer) {
+                if (_useMatchmakingServer) {
                     await udpClient.BindEndpointAsync(null, "0");
                 } else {
                     await udpClient.BindEndpointAsync(null, _listenPort.ToString());
@@ -551,7 +618,7 @@ namespace oi.core.network {
             _sendData(sendBytes, _remoteAddress, _remotePort);
         }
 
-        public UInt64 NOW() {
+        public static UInt64 NOW() {
             return ((UInt64) (DateTime.UtcNow.Subtract(new DateTime(1970, 1, 1))).TotalMilliseconds);
         }
 
@@ -580,6 +647,10 @@ namespace oi.core.network {
 
             }
             if (debugLevel > 0) Debug.Log("DataSender Stopped");
+
+#if !UNITY_EDITOR && UNITY_METRO
+            await Task.Delay(100);
+#endif
         }
     }
 }
