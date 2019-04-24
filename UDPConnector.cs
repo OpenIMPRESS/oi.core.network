@@ -442,14 +442,16 @@ namespace oi.core.network {
             if (!_useMatchmakingServer) anyIP = new IPEndPoint(IPAddress.Any, _listenPort);
             udpClient = new UdpClient(anyIP);
 
-            udpClient.Client.ReceiveBufferSize = 65507;
-            udpClient.Client.SendBufferSize = 65507;
+            udpClient.Client.ReceiveBufferSize = 65507 * 32;
+            udpClient.Client.SendBufferSize = 65507 * 32;
+            //_udpClient.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReceiveBuffer, a big value like 0x40000)
+
             _listenPort = ((IPEndPoint)udpClient.Client.LocalEndPoint).Port;
             if (debugLevel > 0) Debug.Log("Client listening on " + _listenPort);
 
             _listenRunning = true;
+            IPEndPoint recvEP = new IPEndPoint(IPAddress.Any, 0);
             while (_listenRunning) {
-                IPEndPoint recvEP = new IPEndPoint(IPAddress.Any, 0);
                 try {
                     byte[] receivedPackage = udpClient.Receive(ref recvEP);
                     HandleReceivedData(receivedPackage);
